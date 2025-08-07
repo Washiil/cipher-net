@@ -15,6 +15,7 @@ go.work
 go.work.sum
 
 .env
+*.db
 
 # Editor/IDE
 .idea/

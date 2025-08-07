@@ -13,8 +13,8 @@ import (
 
 	"github.com/gocolly/colly"
 	"github.com/joho/godotenv"
-	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/time/rate"
+	_ "modernc.org/sqlite"
 )
 
 // Config holds all the configuration for the application.
@@ -89,12 +89,11 @@ func scrapePlayers(ctx context.Context, cfg Config, wg *sync.WaitGroup) <-chan s
 			colly.UserAgent("Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36"),
 		)
 
-		// TODO: Might want to swap this out with a buffered channel instead
-		c.Limit(&colly.LimitRule{
-			DomainGlob:  "*tracker.gg*",
-			Delay:       time.Minute / time.Duration(cfg.Speed),
-			Parallelism: 1,
-		})
+		// c.Limit(&colly.LimitRule{
+		// 	DomainGlob:  "*tracker.gg*",
+		// 	Delay:       time.Minute / time.Duration(cfg.Speed),
+		// 	Parallelism: 1,
+		// })
 
 		c.OnError(func(r *colly.Response, err error) {
 			logVerbose(cfg.Verbose, "Request to %s failed: %v", r.Request.URL, err) // ADDED: error logging
@@ -179,60 +178,68 @@ func addUUIDs(ctx context.Context, cfg Config, in <-chan scrapedPlayer, token st
 	return out
 }
 
-func saveToDatabase(ctx context.Context, cfg Config, translatedItems <-chan databasePlayer, wg *sync.WaitGroup) {
-	defer wg.Done()
+func saveToDatabase(ctx context.Context, cfg Config, player <-chan databasePlayer, wg *sync.WaitGroup) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
 
-	db, err := sql.Open("sqlite3", cfg.OutputFile)
-	if err != nil {
-		log.Fatalf("Error opening database: %v", err)
-	}
-	defer db.Close()
+		db, err := sql.Open("sqlite", cfg.OutputFile)
+		if err != nil {
+			log.Fatalf("Error opening database: %v", err)
+		}
+		defer db.Close()
 
-	createTableSQL := `CREATE TABLE IF NOT EXISTS players (
-		"uuid" TEXT NOT NULL PRIMARY KEY,
-		"name" TEXT,
-		"tag" TEXT,
-		"twitch" TEXT
-	);`
-	if _, err := db.Exec(createTableSQL); err != nil {
-		log.Fatalf("Error creating table: %v", err)
-	}
-
-	stmt, err := db.Prepare("INSERT OR IGNORE INTO players (uuid, name, tag, twitch) VALUES (?, ?, ?, ?)")
-	if err != nil {
-		log.Fatalf("Error preparing insert statement: %v", err)
-	}
-	defer stmt.Close()
-
-	tx, err := db.Begin()
-	if err != nil {
-		log.Fatalf("Error beginning transaction: %v", err)
-	}
-
-	insertCount := 0
-	for item := range translatedItems {
-		if ctx.Err() != nil {
-			_ = tx.Rollback()
-			return
+		createTableSQL := `CREATE TABLE IF NOT EXISTS players (
+			"uuid" TEXT NOT NULL PRIMARY KEY,
+			"name" TEXT,
+			"tag" TEXT,
+			"twitch" TEXT
+		);`
+		if _, err := db.ExecContext(ctx, createTableSQL); err != nil {
+			log.Fatalf("Error creating table: %v", err)
 		}
 
-		if _, err := tx.Stmt(stmt).Exec(item.UUID, item.Name, item.Tag, item.Twitch); err != nil {
-			log.Printf("Error inserting player %s: %v", item.UUID, err)
-			continue
+		// Begin the first transaction
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			log.Fatalf("Error beginning transaction: %v", err)
 		}
-		insertCount++
-		if insertCount%10 == 0 {
-			if err := tx.Commit(); err != nil {
-				log.Fatalf("Error committing transaction: %v", err)
+
+		insertCount := 0
+		for item := range player {
+			// Check for cancellation before processing the item
+			if ctx.Err() != nil {
+				log.Println("Database saver context cancelled, rolling back transaction.")
+				_ = tx.Rollback()
+				return
 			}
-			tx, _ = db.Begin()
-		}
-		logVerbose(cfg.Verbose, "\r > Saved %d players...", insertCount)
-	}
 
-	if err := tx.Commit(); err != nil {
-		log.Fatalf("Error committing final transaction: %v", err)
-	}
+			query := "INSERT OR IGNORE INTO players (uuid, name, tag, twitch) VALUES (?, ?, ?, ?)"
+			if _, err := tx.ExecContext(ctx, query, item.UUID, item.Name, item.Tag, item.Twitch); err != nil {
+				log.Printf("Error inserting player %s: %v", item.UUID, err)
+				continue
+			}
+
+			insertCount++
+
+			if insertCount%10 == 0 {
+				if err := tx.Commit(); err != nil {
+					log.Fatalf("Error committing transaction: %v", err)
+				}
+				fmt.Printf("\r > Saved %d players...", insertCount)
+				tx, err = db.BeginTx(ctx, nil)
+				if err != nil {
+					log.Fatalf("Error beginning new transaction: %v", err)
+				}
+			}
+		}
+
+		if err := tx.Commit(); err != nil {
+			log.Fatalf("Error committing final transaction: %v", err)
+		}
+
+		fmt.Printf("\n > Finalizing database... Saved a total of %d players.\n", insertCount)
+	}()
 }
 
 func main() {
