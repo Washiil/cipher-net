@@ -4,59 +4,113 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 
 	"github.com/gocolly/colly"
+	"github.com/joho/godotenv"
 )
 
-type player struct {
-	uuid   string
-	twitch string
+type Config struct {
+	Region     string
+	OutputFile string
+	Speed      float64
+	Token      string
+	Verbose    bool
 }
 
-func main() {
-	region := flag.String("region", "na", "Leaderboard to Scrape")
-	outputFile := flag.String("output", "data.db", "Path to the output data file")
-	speed := flag.Float64("speed", 5, "How many pages to scrape per minute")
-	verbose := flag.Bool("verbose", false, "Enable verbose output for debugging")
+type Player struct {
+	UUID   string
+	Twitch string
+	Name   string
+	Tag    string
+}
 
+func loadConfig() Config {
+	region := flag.String("region", "na", "Leaderboard to scrape")
+	outputFile := flag.String("output", "data.db", "Path to the output data file")
+	speed := flag.Float64("speed", 75, "Users to scrape per minute")
+	token := flag.String("token", "", "API Token for UUID parsing")
+	verbose := flag.Bool("verbose", false, "Enable verbose output for debugging")
 	flag.Parse()
 
-	fmt.Println("--- Neural Theft Scraper ---")
-	fmt.Printf(" > Region: %s\n", *region)
-	fmt.Printf(" > Output File: %s\n", *outputFile)
-	fmt.Printf(" > %.2f pages per min \n", *speed)
-
-	if *verbose {
-		fmt.Println(" > Verbose mode: ON")
-	} else {
-		fmt.Println(" > Verbose mode: OFF")
+	// Load token from .env if not set
+	if *token == "" {
+		log.Println("No token specified, attempting to read environmental variables...")
+		if err := godotenv.Load(); err != nil {
+			log.Fatal("Error loading .env file")
+		}
+		envToken := os.Getenv("API_KEY")
+		if envToken == "" {
+			log.Fatal("API_KEY not set in .env")
+		}
+		*token = envToken
 	}
 
+	return Config{
+		Region:     *region,
+		OutputFile: *outputFile,
+		Speed:      *speed,
+		Token:      *token,
+		Verbose:    *verbose,
+	}
+}
+
+func logVerbose(enabled bool, format string, args ...interface{}) {
+	if enabled {
+		log.Printf(format, args...)
+	}
+}
+
+func scrapeLeaderboard(cfg Config) {
 	c := colly.NewCollector(
 		colly.UserAgent("Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36"),
 	)
 
+	count := 0
 	c.OnHTML("td a[href*='/valorant/profile']", func(e *colly.HTMLElement) {
-		username := e.ChildText("span.v3-trnign .max-w-full.truncate")
-		tag := e.ChildText("span.v3-trnign__discriminator")
+		raw_name := e.ChildText("span.v3-trnign .max-w-full.truncate")
+		username := strings.TrimSuffix(strings.TrimSpace(raw_name), "#")
 
+		rawTag := e.ChildText("span.v3-trnign__discriminator")
+		tag := strings.TrimPrefix(strings.TrimSpace(rawTag), "#")
 		twitchURL := e.DOM.Parent().Parent().Find(`a[aria-label="Visit twitch profile"]`).AttrOr("href", "")
-		twitchName := ""
-		if twitchURL != "" {
-			parts := strings.Split(twitchURL, "/")
-			twitchName = parts[len(parts)-1]
+
+		if twitchURL == "" {
+			return
+		}
+		parts := strings.Split(twitchURL, "/")
+		twitchName := parts[len(parts)-1]
+
+		uuid, err := NameToUUID(username, tag, cfg.Token)
+		if err != nil {
+			logVerbose(cfg.Verbose, "Failed to fetch UUID for %s#%s: %v", username, tag, err)
+			return
 		}
 
-		fmt.Printf("Username: %s\n", username)
-		fmt.Printf("Tag: %s\n", tag)
-		fmt.Printf("Twitch: %s\n", twitchName)
+		player := Player{
+			UUID:   uuid,
+			Twitch: twitchName,
+			Name:   username,
+			Tag:    tag,
+		}
+
+		fmt.Printf("[%d] %s#%s | Twitch: %s | UUID: %s\n", count, player.Name, player.Tag, player.Twitch, player.UUID)
+		count++
 	})
 
-	err := c.Visit("https://tracker.gg/valorant/leaderboards/ranked/all/default?platform=pc&region=na&act=ac12e9b3-47e6-9599-8fa1-0bb473e5efc7&page=1")
-	if err != nil {
+	url := fmt.Sprintf("https://tracker.gg/valorant/leaderboards/ranked/all/default?platform=pc&region=%s&page=1", cfg.Region)
+	if err := c.Visit(url); err != nil {
 		log.Fatal(err)
 	}
+}
 
+func main() {
+	cfg := loadConfig()
+
+	fmt.Println("--- Neural Theft Scraper ---")
+	fmt.Printf(" > Region: %s\n > Output File: %s\n > %.2f pages per min\n > Verbose: %t\n", cfg.Region, cfg.OutputFile, cfg.Speed, cfg.Verbose)
+
+	scrapeLeaderboard(cfg)
 	fmt.Println("\n--- Execution Complete ---")
 }
