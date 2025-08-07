@@ -2,15 +2,19 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gocolly/colly"
 	"github.com/joho/godotenv"
+	_ "github.com/mattn/go-sqlite3"
+	"golang.org/x/time/rate"
 )
 
 // Config holds all the configuration for the application.
@@ -73,7 +77,7 @@ func logVerbose(enabled bool, format string, args ...interface{}) {
 	}
 }
 
-func scrapePlayers(cfg Config, wg *sync.WaitGroup) <-chan scrapedPlayer {
+func scrapePlayers(ctx context.Context, cfg Config, wg *sync.WaitGroup) <-chan scrapedPlayer {
 	out := make(chan scrapedPlayer)
 
 	wg.Add(1)
@@ -85,9 +89,24 @@ func scrapePlayers(cfg Config, wg *sync.WaitGroup) <-chan scrapedPlayer {
 			colly.UserAgent("Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36"),
 		)
 
+		// TODO: Might want to swap this out with a buffered channel instead
+		c.Limit(&colly.LimitRule{
+			DomainGlob:  "*tracker.gg*",
+			Delay:       time.Minute / time.Duration(cfg.Speed),
+			Parallelism: 1,
+		})
+
+		c.OnError(func(r *colly.Response, err error) {
+			logVerbose(cfg.Verbose, "Request to %s failed: %v", r.Request.URL, err) // ADDED: error logging
+		})
+
 		c.OnHTML("td a[href*='/valorant/profile']", func(e *colly.HTMLElement) {
-			raw_name := e.ChildText("span.v3-trnign .max-w-full.truncate")
-			username := strings.TrimSuffix(strings.TrimSpace(raw_name), "#")
+			if ctx.Err() != nil {
+				return
+			}
+
+			rawName := e.ChildText("span.v3-trnign .max-w-full.truncate")
+			username := strings.TrimSuffix(strings.TrimSpace(rawName), "#")
 
 			rawTag := e.ChildText("span.v3-trnign__discriminator")
 			tag := strings.TrimPrefix(strings.TrimSpace(rawTag), "#")
@@ -107,7 +126,11 @@ func scrapePlayers(cfg Config, wg *sync.WaitGroup) <-chan scrapedPlayer {
 			}
 
 			logVerbose(cfg.Verbose, "Found player: %s#%s", player.Name, player.Tag)
-			out <- player
+			select {
+			case <-ctx.Done():
+				return
+			case out <- player:
+			}
 		})
 
 		url := fmt.Sprintf("https://tracker.gg/valorant/leaderboards/ranked/all/default?platform=pc&region=%s&page=1", cfg.Region)
@@ -119,7 +142,7 @@ func scrapePlayers(cfg Config, wg *sync.WaitGroup) <-chan scrapedPlayer {
 	return out
 }
 
-func addUUIDs(ctx context.Context, in <-chan scrapedPlayer, token string, wg *sync.WaitGroup) <-chan databasePlayer {
+func addUUIDs(ctx context.Context, cfg Config, in <-chan scrapedPlayer, token string, wg *sync.WaitGroup) <-chan databasePlayer {
 	out := make(chan databasePlayer)
 
 	wg.Add(1)
@@ -127,10 +150,16 @@ func addUUIDs(ctx context.Context, in <-chan scrapedPlayer, token string, wg *sy
 		defer wg.Done()
 		defer close(out)
 
-		for player := range in {
-			uuid, err := NameToUUID(player.Name, player.Tag, token)
+		limiter := rate.NewLimiter(rate.Every(time.Minute/time.Duration(cfg.Speed)), 1)
 
+		for player := range in {
+			if err := limiter.Wait(ctx); err != nil {
+				return
+			}
+
+			uuid, err := NameToUUID(player.Name, player.Tag, token)
 			if err != nil {
+				logVerbose(true, "UUID lookup failed for %s#%s: %v", player.Name, player.Tag, err) // ADDED: log lookup errors
 				continue
 			}
 
@@ -150,6 +179,44 @@ func addUUIDs(ctx context.Context, in <-chan scrapedPlayer, token string, wg *sy
 	return out
 }
 
+func saveToDatabase(ctx context.Context, cfg Config, translatedItemsChan <-chan databasePlayer, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	db, err := sql.Open("sqlite3", cfg.OutputFile)
+	if err != nil {
+		log.Fatalf("Error opening database: %v", err)
+	}
+	defer db.Close()
+
+	// Create the table if it doesn't exist.
+	createTableSQL := `CREATE TABLE IF NOT EXISTS players (
+		"uuid" TEXT NOT NULL PRIMARY KEY,
+		"name" TEXT,
+		"tag" TEXT,
+		"twitch" TEXT
+	);`
+	if _, err := db.Exec(createTableSQL); err != nil {
+		log.Fatalf("Error creating table: %v", err)
+	}
+
+	insertCount := 0
+	for item := range translatedItemsChan {
+		select {
+		case <-ctx.Done():
+			return
+		}
+		query := "INSERT OR IGNORE INTO players (uuid, name, tag, twitch) VALUES (?, ?, ?, ?)"
+		_, err := db.Exec(query, item.UUID, item.Name, item.Tag, item.Twitch)
+		if err != nil {
+			log.Printf("Error inserting player %s into database: %v", item.UUID, err)
+		} else {
+			insertCount++
+			log.Printf("\r > Saved %d players to the database...", insertCount)
+		}
+	}
+	fmt.Println() // Newline after the progress indicator finishes.
+}
+
 func main() {
 	var wg sync.WaitGroup
 
@@ -157,9 +224,9 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	rawPlayerChan := scrapePlayers(cfg, &wg)
+	rawPlayerChan := scrapePlayers(ctx, cfg, &wg)
 	databaseReadyPlayer := addUUIDs(ctx, rawPlayerChan, cfg.Token, &wg)
-	databasePlayers := make(chan databasePlayer, 100)
+	saveToDatabase(ctx, cfg, databaseReadyPlayer, &wg)
 
 	fmt.Println("--- Neural Theft Scraper ---")
 	fmt.Printf(" > Region: %s\n > Output File: %s\n > %.2f pages per min\n > Verbose: %t\n", cfg.Region, cfg.OutputFile, cfg.Speed, cfg.Verbose)
