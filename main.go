@@ -179,7 +179,7 @@ func addUUIDs(ctx context.Context, cfg Config, in <-chan scrapedPlayer, token st
 	return out
 }
 
-func saveToDatabase(ctx context.Context, cfg Config, translatedItemsChan <-chan databasePlayer, wg *sync.WaitGroup) {
+func saveToDatabase(ctx context.Context, cfg Config, translatedItems <-chan databasePlayer, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	db, err := sql.Open("sqlite3", cfg.OutputFile)
@@ -188,7 +188,6 @@ func saveToDatabase(ctx context.Context, cfg Config, translatedItemsChan <-chan 
 	}
 	defer db.Close()
 
-	// Create the table if it doesn't exist.
 	createTableSQL := `CREATE TABLE IF NOT EXISTS players (
 		"uuid" TEXT NOT NULL PRIMARY KEY,
 		"name" TEXT,
@@ -199,22 +198,41 @@ func saveToDatabase(ctx context.Context, cfg Config, translatedItemsChan <-chan 
 		log.Fatalf("Error creating table: %v", err)
 	}
 
+	stmt, err := db.Prepare("INSERT OR IGNORE INTO players (uuid, name, tag, twitch) VALUES (?, ?, ?, ?)")
+	if err != nil {
+		log.Fatalf("Error preparing insert statement: %v", err)
+	}
+	defer stmt.Close()
+
+	tx, err := db.Begin()
+	if err != nil {
+		log.Fatalf("Error beginning transaction: %v", err)
+	}
+
 	insertCount := 0
-	for item := range translatedItemsChan {
-		select {
-		case <-ctx.Done():
+	for item := range translatedItems {
+		if ctx.Err() != nil {
+			_ = tx.Rollback()
 			return
 		}
-		query := "INSERT OR IGNORE INTO players (uuid, name, tag, twitch) VALUES (?, ?, ?, ?)"
-		_, err := db.Exec(query, item.UUID, item.Name, item.Tag, item.Twitch)
-		if err != nil {
-			log.Printf("Error inserting player %s into database: %v", item.UUID, err)
-		} else {
-			insertCount++
-			log.Printf("\r > Saved %d players to the database...", insertCount)
+
+		if _, err := tx.Stmt(stmt).Exec(item.UUID, item.Name, item.Tag, item.Twitch); err != nil {
+			log.Printf("Error inserting player %s: %v", item.UUID, err)
+			continue
 		}
+		insertCount++
+		if insertCount%10 == 0 {
+			if err := tx.Commit(); err != nil {
+				log.Fatalf("Error committing transaction: %v", err)
+			}
+			tx, _ = db.Begin()
+		}
+		logVerbose(cfg.Verbose, "\r > Saved %d players...", insertCount)
 	}
-	fmt.Println() // Newline after the progress indicator finishes.
+
+	if err := tx.Commit(); err != nil {
+		log.Fatalf("Error committing final transaction: %v", err)
+	}
 }
 
 func main() {
@@ -225,7 +243,7 @@ func main() {
 	defer cancel()
 
 	rawPlayerChan := scrapePlayers(ctx, cfg, &wg)
-	databaseReadyPlayer := addUUIDs(ctx, rawPlayerChan, cfg.Token, &wg)
+	databaseReadyPlayer := addUUIDs(ctx, cfg, rawPlayerChan, cfg.Token, &wg)
 	saveToDatabase(ctx, cfg, databaseReadyPlayer, &wg)
 
 	fmt.Println("--- Neural Theft Scraper ---")
