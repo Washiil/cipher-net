@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
@@ -29,11 +30,11 @@ type scrapedPlayer struct {
 }
 
 // TranslatedItem is the data structure after being processed by the translator.
-type TranslatedItem struct {
-	UUID   string
-	Twitch string
+type databasePlayer struct {
 	Name   string
 	Tag    string
+	Twitch string
+	UUID   string
 }
 
 func loadConfig() Config {
@@ -72,42 +73,81 @@ func logVerbose(enabled bool, format string, args ...interface{}) {
 	}
 }
 
-func scrapeLeaderboard(cfg Config, scrapedPlayerChan chan<- scrapedPlayer) {
-	defer close(scrapedPlayerChan)
+func scrapeLeaderboard(cfg Config, wg *sync.WaitGroup) <-chan scrapedPlayer {
+	out := make(chan scrapedPlayer)
 
-	c := colly.NewCollector(
-		colly.UserAgent("Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36"),
-	)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(out)
 
-	c.OnHTML("td a[href*='/valorant/profile']", func(e *colly.HTMLElement) {
-		raw_name := e.ChildText("span.v3-trnign .max-w-full.truncate")
-		username := strings.TrimSuffix(strings.TrimSpace(raw_name), "#")
+		c := colly.NewCollector(
+			colly.UserAgent("Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36"),
+		)
 
-		rawTag := e.ChildText("span.v3-trnign__discriminator")
-		tag := strings.TrimPrefix(strings.TrimSpace(rawTag), "#")
-		twitchURL, exists := e.DOM.Parent().Parent().Find(`a[aria-label="Visit twitch profile"]`).Attr("href")
+		c.OnHTML("td a[href*='/valorant/profile']", func(e *colly.HTMLElement) {
+			raw_name := e.ChildText("span.v3-trnign .max-w-full.truncate")
+			username := strings.TrimSuffix(strings.TrimSpace(raw_name), "#")
 
-		if !exists || twitchURL == "" || username == "" {
-			return
+			rawTag := e.ChildText("span.v3-trnign__discriminator")
+			tag := strings.TrimPrefix(strings.TrimSpace(rawTag), "#")
+			twitchURL, exists := e.DOM.Parent().Parent().Find(`a[aria-label="Visit twitch profile"]`).Attr("href")
+
+			if !exists || twitchURL == "" || username == "" {
+				return
+			}
+
+			parts := strings.Split(twitchURL, "/")
+			twitchName := parts[len(parts)-1]
+
+			player := scrapedPlayer{
+				Name:   username,
+				Tag:    tag,
+				Twitch: twitchName,
+			}
+
+			logVerbose(cfg.Verbose, "Found player: %s#%s", player.Name, player.Tag)
+			out <- player
+		})
+
+		url := fmt.Sprintf("https://tracker.gg/valorant/leaderboards/ranked/all/default?platform=pc&region=%s&page=1", cfg.Region)
+		if err := c.Visit(url); err != nil {
+			log.Fatal(err)
 		}
+	}()
 
-		parts := strings.Split(twitchURL, "/")
-		twitchName := parts[len(parts)-1]
+	return out
+}
 
-		player := scrapedPlayer{
-			Name:   username,
-			Tag:    tag,
-			Twitch: twitchName,
+func addUUID(ctx context.Context, in <-chan scrapedPlayer, token string, wg *sync.WaitGroup) <-chan databasePlayer {
+	out := make(chan databasePlayer)
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer close(out)
+
+		for player := range in {
+			uuid, err := NameToUUID(player.Name, player.Tag, token)
+
+			if err == nil {
+				continue
+			}
+
+			select {
+			case <-ctx.Done():
+				return
+			case out <- databasePlayer{
+				Name:   player.Name,
+				Tag:    player.Tag,
+				Twitch: player.Twitch,
+				UUID:   uuid,
+			}:
+			}
 		}
+	}()
 
-		logVerbose(cfg.Verbose, "Found player: %s#%s", player.Name, player.Tag)
-		scrapedPlayerChan <- player
-	})
-
-	url := fmt.Sprintf("https://tracker.gg/valorant/leaderboards/ranked/all/default?platform=pc&region=%s&page=1", cfg.Region)
-	if err := c.Visit(url); err != nil {
-		log.Fatal(err)
-	}
+	return out
 }
 
 func main() {
@@ -116,7 +156,7 @@ func main() {
 	cfg := loadConfig()
 
 	scrapedPlayerChan := make(chan scrapedPlayer, 100)
-	translatedItemsChan := make(chan TranslatedItem, 100)
+	databasePlayers := make(chan databasePlayer, 100)
 
 	fmt.Println("--- Neural Theft Scraper ---")
 	fmt.Printf(" > Region: %s\n > Output File: %s\n > %.2f pages per min\n > Verbose: %t\n", cfg.Region, cfg.OutputFile, cfg.Speed, cfg.Verbose)
