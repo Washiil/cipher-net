@@ -6,20 +6,30 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/gocolly/colly"
 	"github.com/joho/godotenv"
 )
 
+// Config holds all the configuration for the application.
 type Config struct {
 	Region     string
 	OutputFile string
-	Speed      float64
+	Speed      float64 // This is now requests per minute for the translator
 	Token      string
 	Verbose    bool
 }
 
-type Player struct {
+// scrapedPlayer is the raw data structure produced by the scraper.
+type scrapedPlayer struct {
+	Name   string
+	Tag    string
+	Twitch string
+}
+
+// TranslatedItem is the data structure after being processed by the translator.
+type TranslatedItem struct {
 	UUID   string
 	Twitch string
 	Name   string
@@ -82,17 +92,10 @@ func scrapeLeaderboard(cfg Config) {
 		parts := strings.Split(twitchURL, "/")
 		twitchName := parts[len(parts)-1]
 
-		uuid, err := NameToUUID(username, tag, cfg.Token)
-		if err != nil {
-			logVerbose(cfg.Verbose, "Failed to fetch UUID for %s#%s: %v", username, tag, err)
-			return
-		}
-
-		player := Player{
-			UUID:   uuid,
-			Twitch: twitchName,
+		player := scrapedPlayer{
 			Name:   username,
 			Tag:    tag,
+			Twitch: twitchName,
 		}
 
 		fmt.Printf("[%d] %s#%s | Twitch: %s | UUID: %s\n", count, player.Name, player.Tag, player.Twitch, player.UUID)
@@ -106,11 +109,18 @@ func scrapeLeaderboard(cfg Config) {
 }
 
 func main() {
+	var wg sync.WaitGroup
+
 	cfg := loadConfig()
+
+	scrapedPlayerChan := make(chan scrapedPlayer, 100)
+	translatedItemsChan := make(chan TranslatedItem, 100)
 
 	fmt.Println("--- Neural Theft Scraper ---")
 	fmt.Printf(" > Region: %s\n > Output File: %s\n > %.2f pages per min\n > Verbose: %t\n", cfg.Region, cfg.OutputFile, cfg.Speed, cfg.Verbose)
 
-	scrapeLeaderboard(cfg)
+	go scrapeLeaderboard(cfg, scrapedPlayerChan)
+
+	wg.Wait()
 	fmt.Println("\n--- Execution Complete ---")
 }
