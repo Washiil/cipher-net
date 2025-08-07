@@ -73,7 +73,7 @@ func logVerbose(enabled bool, format string, args ...interface{}) {
 	}
 }
 
-func scrapeLeaderboard(cfg Config, wg *sync.WaitGroup) <-chan scrapedPlayer {
+func scrapePlayers(cfg Config, wg *sync.WaitGroup) <-chan scrapedPlayer {
 	out := make(chan scrapedPlayer)
 
 	wg.Add(1)
@@ -119,7 +119,7 @@ func scrapeLeaderboard(cfg Config, wg *sync.WaitGroup) <-chan scrapedPlayer {
 	return out
 }
 
-func addUUID(ctx context.Context, in <-chan scrapedPlayer, token string, wg *sync.WaitGroup) <-chan databasePlayer {
+func addUUIDs(ctx context.Context, in <-chan scrapedPlayer, token string, wg *sync.WaitGroup) <-chan databasePlayer {
 	out := make(chan databasePlayer)
 
 	wg.Add(1)
@@ -130,7 +130,7 @@ func addUUID(ctx context.Context, in <-chan scrapedPlayer, token string, wg *syn
 		for player := range in {
 			uuid, err := NameToUUID(player.Name, player.Tag, token)
 
-			if err == nil {
+			if err != nil {
 				continue
 			}
 
@@ -154,14 +154,15 @@ func main() {
 	var wg sync.WaitGroup
 
 	cfg := loadConfig()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
-	scrapedPlayerChan := make(chan scrapedPlayer, 100)
+	rawPlayerChan := scrapePlayers(cfg, &wg)
+	databaseReadyPlayer := addUUIDs(ctx, rawPlayerChan, cfg.Token, &wg)
 	databasePlayers := make(chan databasePlayer, 100)
 
 	fmt.Println("--- Neural Theft Scraper ---")
 	fmt.Printf(" > Region: %s\n > Output File: %s\n > %.2f pages per min\n > Verbose: %t\n", cfg.Region, cfg.OutputFile, cfg.Speed, cfg.Verbose)
-
-	go scrapeLeaderboard(cfg, scrapedPlayerChan)
 
 	wg.Wait()
 	fmt.Println("\n--- Execution Complete ---")
