@@ -72,23 +72,25 @@ func logVerbose(enabled bool, format string, args ...interface{}) {
 	}
 }
 
-func scrapeLeaderboard(cfg Config) {
+func scrapeLeaderboard(cfg Config, scrapedPlayerChan chan<- scrapedPlayer) {
+	defer close(scrapedPlayerChan)
+
 	c := colly.NewCollector(
 		colly.UserAgent("Mozilla/5.0 (Windows NT 6.1) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/41.0.2228.0 Safari/537.36"),
 	)
 
-	count := 0
 	c.OnHTML("td a[href*='/valorant/profile']", func(e *colly.HTMLElement) {
 		raw_name := e.ChildText("span.v3-trnign .max-w-full.truncate")
 		username := strings.TrimSuffix(strings.TrimSpace(raw_name), "#")
 
 		rawTag := e.ChildText("span.v3-trnign__discriminator")
 		tag := strings.TrimPrefix(strings.TrimSpace(rawTag), "#")
-		twitchURL := e.DOM.Parent().Parent().Find(`a[aria-label="Visit twitch profile"]`).AttrOr("href", "")
+		twitchURL, exists := e.DOM.Parent().Parent().Find(`a[aria-label="Visit twitch profile"]`).Attr("href")
 
-		if twitchURL == "" {
+		if !exists || twitchURL == "" || username == "" {
 			return
 		}
+
 		parts := strings.Split(twitchURL, "/")
 		twitchName := parts[len(parts)-1]
 
@@ -98,8 +100,8 @@ func scrapeLeaderboard(cfg Config) {
 			Twitch: twitchName,
 		}
 
-		fmt.Printf("[%d] %s#%s | Twitch: %s | UUID: %s\n", count, player.Name, player.Tag, player.Twitch, player.UUID)
-		count++
+		logVerbose(cfg.Verbose, "Found player: %s#%s", player.Name, player.Tag)
+		scrapedPlayerChan <- player
 	})
 
 	url := fmt.Sprintf("https://tracker.gg/valorant/leaderboards/ranked/all/default?platform=pc&region=%s&page=1", cfg.Region)
