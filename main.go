@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -17,23 +18,20 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Config holds all the configuration for the application.
 type Config struct {
 	Region     string
 	OutputFile string
-	Speed      float64 // This is now requests per minute for the translator
+	Speed      float64
 	Token      string
 	Verbose    bool
 }
 
-// scrapedPlayer is the raw data structure produced by the scraper.
 type scrapedPlayer struct {
 	Name   string
 	Tag    string
 	Twitch string
 }
 
-// TranslatedItem is the data structure after being processed by the translator.
 type databasePlayer struct {
 	Name   string
 	Tag    string
@@ -78,7 +76,7 @@ func logVerbose(enabled bool, format string, args ...interface{}) {
 }
 
 func scrapePlayers(ctx context.Context, cfg Config, wg *sync.WaitGroup) <-chan scrapedPlayer {
-	out := make(chan scrapedPlayer)
+	out := make(chan scrapedPlayer, int(math.Floor(cfg.Speed)))
 
 	wg.Add(1)
 	go func() {
@@ -99,42 +97,61 @@ func scrapePlayers(ctx context.Context, cfg Config, wg *sync.WaitGroup) <-chan s
 			logVerbose(cfg.Verbose, "Request to %s failed: %v", r.Request.URL, err) // ADDED: error logging
 		})
 
-		c.OnHTML("td a[href*='/valorant/profile']", func(e *colly.HTMLElement) {
+		for page := 1; ; page++ {
+			foundAny := false
+
+			c.OnHTML("td a[href*='/valorant/profile']", func(e *colly.HTMLElement) {
+				if ctx.Err() != nil {
+					return
+				}
+
+				foundAny = true
+
+				rawName := e.ChildText("span.v3-trnign .max-w-full.truncate")
+				username := strings.TrimSuffix(strings.TrimSpace(rawName), "#")
+				rawTag := e.ChildText("span.v3-trnign__discriminator")
+				tag := strings.TrimPrefix(strings.TrimSpace(rawTag), "#")
+
+				twitchURL, exists := e.DOM.Parent().Parent().
+					Find(`a[aria-label="Visit twitch profile"]`).Attr("href")
+				if !exists || twitchURL == "" || username == "" {
+					return
+				}
+				parts := strings.Split(twitchURL, "/")
+				twitchName := parts[len(parts)-1]
+
+				player := scrapedPlayer{
+					Name:   username,
+					Tag:    tag,
+					Twitch: twitchName,
+				}
+				logVerbose(cfg.Verbose, "Found player: %s#%s", player.Name, player.Tag)
+
+				select {
+				case <-ctx.Done():
+					return
+				case out <- player:
+				}
+			})
+
+			// build URL and visit
+			url := fmt.Sprintf(
+				"https://tracker.gg/valorant/leaderboards/ranked/all/default?platform=pc&region=%s&page=%d",
+				cfg.Region, page,
+			)
+			if err := c.Visit(url); err != nil {
+				logVerbose(cfg.Verbose, "Visit error on page %d: %v", page, err)
+				break
+			}
+
 			if ctx.Err() != nil {
-				return
+				break
 			}
-
-			rawName := e.ChildText("span.v3-trnign .max-w-full.truncate")
-			username := strings.TrimSuffix(strings.TrimSpace(rawName), "#")
-
-			rawTag := e.ChildText("span.v3-trnign__discriminator")
-			tag := strings.TrimPrefix(strings.TrimSpace(rawTag), "#")
-			twitchURL, exists := e.DOM.Parent().Parent().Find(`a[aria-label="Visit twitch profile"]`).Attr("href")
-
-			if !exists || twitchURL == "" || username == "" {
-				return
+			// if no players found on this page, we’re past the last page
+			if !foundAny {
+				logVerbose(cfg.Verbose, "No players on page %d—stopping", page)
+				break
 			}
-
-			parts := strings.Split(twitchURL, "/")
-			twitchName := parts[len(parts)-1]
-
-			player := scrapedPlayer{
-				Name:   username,
-				Tag:    tag,
-				Twitch: twitchName,
-			}
-
-			logVerbose(cfg.Verbose, "Found player: %s#%s", player.Name, player.Tag)
-			select {
-			case <-ctx.Done():
-				return
-			case out <- player:
-			}
-		})
-
-		url := fmt.Sprintf("https://tracker.gg/valorant/leaderboards/ranked/all/default?platform=pc&region=%s&page=1", cfg.Region)
-		if err := c.Visit(url); err != nil {
-			log.Fatal(err)
 		}
 	}()
 
