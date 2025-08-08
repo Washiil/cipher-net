@@ -1,22 +1,42 @@
+/neural-theft
 *.exe
-*.exe~
-*.dll
-*.so
-*.dylib
+*.out
+*.o
 
 *.test
 
-*.out
-coverage.*
-*.coverprofile
-profile.cov
+*.log
+*.tmp
 
-go.work
-go.work.sum
+vendor/
 
-.env
-*.db
-
-# Editor/IDE
-.idea/
 .vscode/
+.idea/
+*.swp
+*~
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Env files
+.env
+.env.*
+
+# SQLite DB files
+*.db
+*.db-journal
+
+coverage.out
+
+*.bundle.js
+*.min.css
+*.map
+
+/.git/hooks/*
+!.git/hooks/pre-commit.sample
+
+build/
+dist/
+
+/go.sum
