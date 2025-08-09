@@ -51,3 +51,20 @@ go build -o neural-theft
 <p align="center">
   <img src="./assets/demo.png">
 </p>
+
+## 📜 License
+
+This project is licensed under the **Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0)**.
+
+You are free to:
+- **Use** the code for personal, educational, or research purposes.
+- **Modify & Share** it, as long as you give appropriate credit.
+
+You are **not allowed** to:
+- Use this project or its derivatives for **commercial purposes** (anything primarily intended for or directed toward commercial advantage or monetary compensation).
+
+Full license text: [LICENSE](./LICENSE)
+
+---
+
+All code written for educational purposes only.
