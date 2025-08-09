@@ -5,19 +5,25 @@
 
 ---
 
-Neural-Theft is a **Go-powered**, **concurrent web scraper** that digs through [Tracker.gg](https://tracker.gg) for game stats and stashes them in a **SQLite3 database**.  
+**Neural-Theft** is a high-performance, concurrent data pipeline written in Go that scrapes player stats from [Tracker.gg](https://tracker.gg) and stores them in a lightweight SQLite database.
 
-Concurrent. Elegant.  
+- **Concurrency & Parallelism**: Leveraging Go’s goroutines, channels, and rate limiting for efficient, safe, and scalable web scraping.
+- **Modular Architecture**: Clear separation of concerns between configuration, scraping, data processing, and persistence.
+- **Robust Data Pipeline**: From HTML parsing to API integration and database transactions, with error handling and context-based cancellation.
+- **Testability & Maintenance**: Easily extendable components with unit-friendly interfaces and minimal external dependencies.
+
+---
+
+## 🚀 Key Features
+
+- **Concurrent Scraping Engine**: Utilizes the `colly` library alongside Go’s concurrency primitives to fetch and parse hundreds of pages per minute without blocking or data races.
+- **Rate-Limited API Integration**: Safe, token-authenticated calls to external APIs for UUID resolution, governed by `golang.org/x/time/rate` to respect service limits.
+- **Transactional Persistence**: Batch commits to SQLite3 via `modernc.org/sqlite` with `INSERT OR IGNORE` semantics for idempotent inserts and efficient rollback.
+- **Context-Aware Cancellation**: Graceful shutdown of all goroutines on user interrupt or error, ensuring no partial writes or resource leaks.
+- **Verbose Logging**: Optional debug mode for real-time insights into scraping progress, API failures, and database operations.
 
 ---
 
-## 🚀 Features
-- **Blazing fast scraping** with Go’s goroutines & channels.
-- **Lightweight persistence** via SQLite3 – no complex DB setup.
-- **Modular design** – extend or repurpose the scraping engine easily.
-- **CLI-based** – no nonsense.
-
----
 
 ## 🛠 Installation
 Make sure you have Go installed.
@@ -26,3 +32,17 @@ Make sure you have Go installed.
 git clone https://github.com/washiil/neural-theft.git
 cd neural-theft
 go build -o neural-theft
+```
+
+
+```bash
+cp .env.example .env
+# Add your API_KEY in .env
+```
+
+```bash
+./neural-theft \
+  -region na \
+  -output players.db \
+  -speed 100
+```
