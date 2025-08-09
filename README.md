@@ -54,17 +54,19 @@ go build -o neural-theft
 
 ## 📜 License
 
-This project is licensed under the **Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0)**.
+This project was written for educational purposes and is licensed under the Apache License 2.0.
 
 You are free to:
-- **Use** the code for personal, educational, or research purposes.
-- **Modify & Share** it, as long as you give appropriate credit.
+- Use, modify, and distribute this code, including for commercial purposes 
+- Incorporate it into proprietary projects.
 
-You are **not allowed** to:
-- Use this project or its derivatives for **commercial purposes** (anything primarily intended for or directed toward commercial advantage or monetary compensation).
+You must:
+- Include a copy of this license in any distribution.
+- State any significant changes made to the original code.
+- Respect the patent grant terms described in the license.
 
-Full license text: [LICENSE](./LICENSE)
+[Full License Text](./LICENSE)
 
 ---
 
-All code written for educational purposes only.
+© 2025 Washi. Licensed under the Apache License, Version 2.0.
