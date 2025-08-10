@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/washiil/neural-theft/internal/config"
-	"github.com/washiil/neural-theft/internal/database"
-	"github.com/washiil/neural-theft/internal/processor"
-	"github.com/washiil/neural-theft/internal/scraper"
+	"github.com/washiil/cipher-net/internal/config"
+	"github.com/washiil/cipher-net/internal/database"
+	"github.com/washiil/cipher-net/internal/processor"
+	"github.com/washiil/cipher-net/internal/scraper"
 )
 
 func Run() {

@@ -1,6 +1,6 @@
 package main
 
-import "github.com/washiil/neural-theft/cmd"
+import "github.com/washiil/cipher-net/cmd"
 
 func main() {
 	cmd.Run()

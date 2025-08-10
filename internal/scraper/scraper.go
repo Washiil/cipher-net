@@ -7,8 +7,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/washiil/neural-theft/internal/config"
-	"github.com/washiil/neural-theft/internal/utils"
+	"github.com/washiil/cipher-net/internal/config"
+	"github.com/washiil/cipher-net/internal/utils"
 
 	"github.com/gocolly/colly"
 )

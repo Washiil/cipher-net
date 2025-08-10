@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/washiil/neural-theft/internal/config"
-	"github.com/washiil/neural-theft/internal/scraper"
-	"github.com/washiil/neural-theft/internal/utils"
+	"github.com/washiil/cipher-net/internal/config"
+	"github.com/washiil/cipher-net/internal/scraper"
+	"github.com/washiil/cipher-net/internal/utils"
 
 	"golang.org/x/time/rate"
 )

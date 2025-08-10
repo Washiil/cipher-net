@@ -1,4 +1,4 @@
-module github.com/washiil/neural-theft
+module github.com/washiil/cipher-net
 
 go 1.24
 

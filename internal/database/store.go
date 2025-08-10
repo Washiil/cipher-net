@@ -9,8 +9,8 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/washiil/neural-theft/internal/config"
-	"github.com/washiil/neural-theft/internal/processor"
+	"github.com/washiil/cipher-net/internal/config"
+	"github.com/washiil/cipher-net/internal/processor"
 )
 
 func SaveToDatabase(ctx context.Context, cfg config.Config, in <-chan processor.DatabasePlayer, wg *sync.WaitGroup) {
