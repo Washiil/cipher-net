@@ -3,7 +3,7 @@
 
 ---
 
-**Neural-Theft** is a high-performance, concurrent data pipeline written in Go that scrapes player stats from [Tracker.gg](https://tracker.gg), enriches them with data from the [Unofficial Valorant API](https://github.com/Henrik-3/unofficial-valorant-api), and stores the results in a lightweight SQLite database.
+**Cipher Net** is a high-performance, concurrent data pipeline written in Go that scrapes player stats from [Tracker.gg](https://tracker.gg), enriches them with data from the [Unofficial Valorant API](https://github.com/Henrik-3/unofficial-valorant-api), and stores the results in a lightweight SQLite database.
 
 - **Concurrency & Parallelism**: Go’s goroutines, channels, and rate limiting deliver efficient, safe, and scalable scraping.
 - **Modular Architecture**: Separation between configuration, scraping, data processing, and persistence for clarity and extensibility.
@@ -24,7 +24,7 @@
 
 ## 🧩 Data Pipeline Overview
 
-The **Neural-Theft** data pipeline follows this flow:
+The **Cipher Net** data pipeline follows this flow:
 
 1. **Scraping Stage** → Scrape player pages from Tracker.gg using `colly`.
 2. **Enrichment Stage** → For each scraped record, resolve UUIDs and pull extra details from the **Unofficial Valorant API**.
@@ -40,9 +40,9 @@ This modular design means you can swap out sources, adjust enrichment logic, or 
 Make sure you have Go installed.
 
 ```bash
-git clone https://github.com/washiil/neural-theft.git
-cd neural-theft
-go build -o neural-theft
+git clone https://github.com/washiil/cipher-net.git
+cd cipher-net
+go build -o cipher-net
 ```
 
 ## Preview
