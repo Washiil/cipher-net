@@ -13,11 +13,11 @@ import (
 )
 
 func Run() {
-	region := flag.String("region", "na", "Leaderboard region (e.g., na, eu, ap)")
-	output := flag.String("output", "data.db", "Output SQLite database file")
-	speed := flag.Float64("speed", 75, "Scrape speed (users per minute)")
-	token := flag.String("token", "", "API token for UUID lookup")
-	verbose := flag.Bool("verbose", false, "Enable verbose debug output")
+	region := flag.String("region", "na", "Leaderboard region (e.g., NA, EU, AP)")
+	output := flag.String("output", "data.db", "SQLite database file (.db)")
+	speed := flag.Float64("speed", 75, "Speed (users/min)")
+	token := flag.String("token", "", "API Token")
+	verbose := flag.Bool("verbose", false, "Verbose output")
 	flag.Parse()
 
 	cfg := config.Config{
